@@ -23,6 +23,8 @@ AUTHORIZED_USER = {
 
 MAX_ATTEMPTS_LOGIN = 3
 
+CURRENT_DIR = os.getcwd()
+
 
 def user_input_listener() -> None:
     global server_running, server_socket
@@ -103,6 +105,8 @@ def handle_client(client_socket: socket.socket) -> None:
                 handle_pass_command(client_socket, username, command_splitted[1])
             case Command.PASV.name:
                 passive_mode()
+            case Command.PWD.name:
+                print_working_directory(client_socket)
             case Command.LIST.name:
                 listing_directory()
             case Command.RETR.name:
@@ -144,6 +148,10 @@ def handle_pass_command(client_socket: socket.socket, username: str, input_passw
 
 def passive_mode() -> None:
     pass
+
+def print_working_directory(client_socket: socket.socket) -> None:
+    response = f"257 {CURRENT_DIR} is current directory\r\n"
+    client_socket.sendall(response.encode())
 
 def listing_directory() -> None:
     pass

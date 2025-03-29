@@ -115,11 +115,13 @@ def run_communication() -> None:
         ).ask()
         
         match answer:
+            case "Print working directory":
+                print_working_directory()
             case "Close connection":
                 close_connection()
                 break
 
-def authenticate_user() -> bool:
+def authenticate_user() -> Tuple[bool, str]:
     answers = questionary.form(
         input_username=questionary.text("Input username"),
         input_password=questionary.text("Input password")
@@ -133,6 +135,11 @@ def authenticate_user() -> bool:
         return False, response_pass_command[0]
     else:
         return True, response_pass_command[0]
+
+def print_working_directory() -> None:
+    print("Send command to see current working directory")
+    send_command(Command.PWD)
+    questionary.press_any_key_to_continue("Press any key to Continue >").ask()
 
 def close_connection() -> None:
     send_command(Command.QUIT)

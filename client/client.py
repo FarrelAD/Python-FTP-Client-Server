@@ -2,6 +2,7 @@ from colorama import Fore
 from command import Command
 import os
 import socket
+from typing import Tuple
 import questionary
 
 
@@ -56,9 +57,14 @@ def start() -> None:
         response = client_socket.recv(1024).decode()
         print(f"{Fore.GREEN}Response: {response}{Fore.RESET}")
         
-        authenticate_user()
-        questionary.press_any_key_to_continue("Press any key to Continue >").ask()
-        run_communication()
+        is_authenticated = False
+        response_status = "530"
+        while is_authenticated == False and response_status == "530":
+            is_authenticated, response_status = authenticate_user()
+            questionary.press_any_key_to_continue("Press any key to Continue >").ask()
+        
+        if is_authenticated:
+            run_communication()
     except ConnectionRefusedError:
         print(f"{Fore.RED}Error: Server is not available. Please try again later.{Fore.RESET}")
     except Exception as e:
@@ -69,13 +75,24 @@ def start() -> None:
     
     questionary.press_any_key_to_continue("Press any key to Continue >").ask()
 
-def send_command(command: Command, arg: str = '') -> None:
+def send_command(command: Command, arg: str = '') -> Tuple[str, str]:
     full_command = f"{command.name} {arg}"
     client_socket.sendall(full_command.encode() + b'\r\n')
     
-    response = client_socket.recv(1024).decode()
-    print(f"Response: {response}")
-    return response
+    return receive_response()
+    
+def receive_response() -> Tuple[str, str]:
+    response_status, response_msg = client_socket.recv(1024).decode().split(" ", 1)
+    
+    match response_status[0]:
+        case "1": response_status_type = Fore.CYAN
+        case "2": response_status_type = Fore.GREEN
+        case "3": response_status_type = Fore.BLUE
+        case "4": response_status_type = Fore.YELLOW
+        case "5": response_status_type = Fore.RED
+    
+    print(f"Response:{response_status_type} {response_status} {response_msg}{Fore.RESET}")
+    return response_status, response_msg
 
 def run_communication() -> None:
     while True:
@@ -93,23 +110,29 @@ def run_communication() -> None:
                 "Download file from the server",
                 "Upload file to the server"
                 "Delete file",
-                "Exit"
+                "Close connection"
             ]
         ).ask()
         
         match answer:
-            case "Exit":
+            case "Close connection":
                 close_connection()
                 break
 
-def authenticate_user() -> None:
+def authenticate_user() -> bool:
     answers = questionary.form(
         input_username=questionary.text("Input username"),
         input_password=questionary.text("Input password")
     ).ask()
     
-    send_command(Command.USER, answers['input_username'])
-    send_command(Command.PASS, answers['input_password'])
+    response_user_command = send_command(Command.USER, answers['input_username'])
+    response_pass_command = send_command(Command.PASS, answers['input_password'])
+    
+    if response_user_command[0] != "331" or response_pass_command[0] != "230":
+        print(f"{Fore.RED}User failed to authenticated! Try again!{Fore.RESET}")
+        return False, response_pass_command[0]
+    else:
+        return True, response_pass_command[0]
 
 def close_connection() -> None:
     send_command(Command.QUIT)

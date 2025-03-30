@@ -22,6 +22,11 @@ This DIY FTP server follows the standard FTP protocol specifications. It establi
 
 Since this FTP implementation operates in **passive mode**, the client is responsible for initiating the data connection, making it more suitable for use behind firewalls and NAT configurations.
 
+## Demo 🚗
+
+https://github.com/user-attachments/assets/931ec438-29cc-4a33-98d9-0b69a3d2f7a5
+
+
 ## Notes 📝
 
 This FTP server was developed and tested on a **Windows** environment. Cross-platform compatibility is not guaranteed due to potential limitations in Python's networking modules on different operating systems.

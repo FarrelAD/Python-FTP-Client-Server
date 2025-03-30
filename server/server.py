@@ -1,5 +1,5 @@
 from colorama import Fore
-from command import Command
+from enum import Enum
 import os
 import platform
 import random
@@ -56,6 +56,19 @@ server_socket = None
 server_running = False
 
 data_conn = None
+
+
+
+class Command(Enum):
+    LIST = "LIST"
+    PWD  = "PWD"
+    PASS = "PASS"
+    PASV = "PASV"
+    RETR = "RETR"
+    STOR = "STOR"
+    USER = "USER"
+    QUIT = "QUIT"
+
 
 
 def get_local_ip() -> str:
@@ -148,6 +161,8 @@ def handle_client(client_socket: socket.socket) -> None:
                 handle_list_command(client_socket)
             case Command.RETR.name:
                 handle_retr_command(client_socket, command_arg)
+            case Command.STOR.name:
+                handle_stor_command(client_socket, command_arg)
             case Command.QUIT.name:
                 handle_quit_command(client_socket)
                 break
@@ -244,7 +259,7 @@ def handle_list_command(client_socket: socket.socket) -> None:
 def handle_retr_command(client_socket: socket.socket, filename: str) -> None:
     print("The client requested to retrieve the file.")
     
-    if os.path.isfile(f"{CURRENT_DIR}+/{filename}"):
+    if not os.path.isfile(f"{CURRENT_DIR}/{filename}"):
         client_socket.sendall(b"550 File not found or access denied.\r\n")
         return
     
@@ -262,8 +277,21 @@ def handle_retr_command(client_socket: socket.socket, filename: str) -> None:
         client_socket.sendall(b"550 File transfer failed.\r\n")
         print(f"Error sending file: {e}")
 
-def uploading_file() -> None:
-    pass
+def handle_stor_command(client_socket: socket.socket, filename: str) -> None:
+    try:
+        client_socket.sendall(b"150 Ready to receive file\r\n")
+        
+        with open(filename, "wb") as file:
+            while True:
+                data = data_conn.recv(MAX_BUFFER_SIZE_DATA)
+                if not data: break
+                file.write(data)
+        
+        client_socket.sendall(b"226 File upload complete\r\n")
+    except Exception as e:
+        client_socket.sendall(f"550 Error: {str(e)}\r\n".encode("utf-8"))
+    finally:
+        data_conn.close()
 
 def handle_quit_command(client_socket: socket.socket) -> None:
     print(f"{Fore.RED}Connection closed with {client_socket.getpeername()}{Fore.RESET}")

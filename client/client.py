@@ -1,5 +1,5 @@
 from colorama import Fore
-from command import Command
+from enum import Enum
 import os
 import re
 import socket
@@ -15,6 +15,20 @@ MAX_BUFFER_SIZE_DATA    = 4096
 client_socket           = None
 data_socket             = None
 is_connection_active    = False
+
+
+
+class Command(Enum):
+    LIST = "LIST"
+    PWD  = "PWD"
+    PASS = "PASS"
+    PASV = "PASV"
+    RETR = "RETR"
+    STOR = "STOR"
+    USER = "USER"
+    QUIT = "QUIT"
+
+
 
 def menu() -> None:
     while True:
@@ -79,8 +93,8 @@ def start() -> None:
     questionary.press_any_key_to_continue("Press any key to Continue >").ask()
 
 def send_command(command: Command, arg: str = '') -> Tuple[str, str]:
-    full_command = f"{command.name} {arg}"
-    client_socket.sendall(full_command.encode() + b'\r\n')
+    full_command = f"{command.name} {arg}\r\n"
+    client_socket.sendall(full_command.encode())
     
     return receive_control_response()
     
@@ -120,7 +134,7 @@ def run_communication() -> None:
                 "4. Create directory",
                 "5. Remove directory",
                 "6. Download file from the server",
-                "7. Upload file to the server"
+                "7. Upload file to the server",
                 "8. Delete file",
                 "9. Close connection"
             ]
@@ -133,6 +147,8 @@ def run_communication() -> None:
                 list_directory()
             case "6. Download file from the server":
                 download_file_from_server()
+            case "7. Upload file to the server":
+                upload_file_to_server()
             case "9. Close connection":
                 close_connection()
                 break
@@ -226,6 +242,39 @@ def download_file_from_server() -> None:
     
     data_socket.close()
     
+    # Final response
+    receive_control_response()
+
+def upload_file_to_server() -> None:
+    file_path = questionary.text("Specify a file name to upload to the server (ABSOLUTE PATH)").ask()
+    
+    if not os.path.isfile(file_path):
+        print(f"{Fore.RED}ERROR: File can not be found{Fore.RESET}")
+        return
+    
+    file_name = os.path.basename(file_path)
+    
+    open_data_connection()
+    
+    if data_socket == None:
+        print(f"{Fore.RED}ERROR: Data connection can not be open{Fore.RESET}")
+        return
+    
+    if data_socket.fileno() == -1:
+        print(f"{Fore.RED}ERROR: Data connection is already closed{Fore.RESET}")
+        return
+    
+    response_status, _ = send_command(Command.STOR, file_name)
+    
+    if response_status != "150":
+        return
+    
+    with open(file_path, "rb") as file:
+        while chunk := file.read(MAX_BUFFER_SIZE_DATA):
+            data_socket.sendall(chunk)
+    
+    data_socket.close()
+        
     # Final response
     receive_control_response()
 

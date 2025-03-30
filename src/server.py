@@ -133,24 +133,23 @@ def handle_client(client_socket: socket.socket) -> None:
         client_command = client_request.decode().strip()
         
         print(f"Received command: {client_command}")
-        command_splitted = client_command.split()
-        command_start = command_splitted[0]
+        command_start, command_arg = (client_command.split(maxsplit=1) + [""])[:2]
         
         match command_start:
             case Command.USER.name:
-                username, attempts_login = handle_user_command(client_socket, command_splitted[1], attempts_login)
+                username, attempts_login = handle_user_command(client_socket, command_arg, attempts_login)
             case Command.PASS.name:
-                handle_pass_command(client_socket, username, command_splitted[1])
+                handle_pass_command(client_socket, username, command_arg)
             case Command.PASV.name:
-                passive_mode(client_socket)
+                handle_pasv_command(client_socket)
             case Command.PWD.name:
-                print_working_directory(client_socket)
+                handle_pwd_command(client_socket)
             case Command.LIST.name:
-                list_directory(client_socket)
+                handle_list_command(client_socket)
             case Command.RETR.name:
-                retrieving_file()
+                handle_retr_command(client_socket, command_arg)
             case Command.QUIT.name:
-                close_client_connection(client_socket)
+                handle_quit_command(client_socket)
                 break
             case _:
                 client_socket.sendall(b"502 Command not implemented\r\n")
@@ -184,7 +183,7 @@ def handle_pass_command(client_socket: socket.socket, username: str, input_passw
         response = "530 Incorrect password.\r\n"
     client_socket.sendall(response.encode())
 
-def passive_mode(client_socket: socket.socket) -> None:
+def handle_pasv_command(client_socket: socket.socket) -> None:
     global data_conn
     
     DATA_PORT = random.randint(49512, 65535)
@@ -204,11 +203,11 @@ def get_pasv_response(ip: str, port: int) -> str:
     ip_parts = ip.split(".")
     return f"227 Entering Passive Mode ({','.join(ip_parts)},{p1},{p2})\r\n"
 
-def print_working_directory(client_socket: socket.socket) -> None:
+def handle_pwd_command(client_socket: socket.socket) -> None:
     response = f"257 {CURRENT_DIR} is current directory\r\n"
     client_socket.sendall(response.encode())
 
-def list_directory(client_socket: socket.socket) -> None:
+def handle_list_command(client_socket: socket.socket) -> None:
     print("Client requested directory listing.")
     
     items = os.listdir(CURRENT_DIR)
@@ -242,13 +241,31 @@ def list_directory(client_socket: socket.socket) -> None:
     data_conn.close()
     client_socket.sendall(b"226 Closing data connection\r\n")
 
-def retrieving_file() -> None:
-    pass
+def handle_retr_command(client_socket: socket.socket, filename: str) -> None:
+    print("The client requested to retrieve the file.")
+    
+    if os.path.isfile(f"{CURRENT_DIR}+/{filename}"):
+        client_socket.sendall(b"550 File not found or access denied.\r\n")
+        return
+    
+    try:
+        client_socket.send(b"150 Opening data connection for file transfer.\r\n")
+
+        with open(filename, "rb") as file:
+            while chunk := file.read(MAX_BUFFER_SIZE_DATA):
+                data_conn.sendall(chunk)
+
+        data_conn.close()
+
+        client_socket.sendall(b"226 Transfer complete.\r\n")
+    except Exception as e:
+        client_socket.sendall(b"550 File transfer failed.\r\n")
+        print(f"Error sending file: {e}")
 
 def uploading_file() -> None:
     pass
 
-def close_client_connection(client_socket: socket.socket) -> None:
+def handle_quit_command(client_socket: socket.socket) -> None:
     print(f"{Fore.RED}Connection closed with {client_socket.getpeername()}{Fore.RESET}")
     client_socket.sendall(b"221 Good bye.")
     client_socket.close()

@@ -7,13 +7,14 @@ from typing import Tuple
 import questionary
 
 
-HOST = 'localhost'
-PORT = 21
+HOST                    = 'localhost'
+PORT                    = 21
 MAX_BUFFER_SIZE_CONTROL = 1024
 MAX_BUFFER_SIZE_DATA    = 4096
 
-client_socket = None
-is_connection_active = False
+client_socket           = None
+data_socket             = None
+is_connection_active    = False
 
 def menu() -> None:
     while True:
@@ -130,6 +131,8 @@ def run_communication() -> None:
                 print_working_directory()
             case "3. List files and directories":
                 list_directory()
+            case "6. Download file from the server":
+                download_file_from_server()
             case "9. Close connection":
                 close_connection()
                 break
@@ -138,20 +141,33 @@ def run_communication() -> None:
                 
         questionary.press_any_key_to_continue("Press any key to Continue >").ask()
 
+def open_data_connection() -> None:
+    global data_socket
+    
+    _, response = send_command(Command.PASV)
+    
+    data_ip, data_port = parse_pasv_response(response)
+    if not data_ip or not data_port:
+        print(f"{Fore.RED}Failed to parse PASV response.{Fore.RESET}")
+        return
+    
+    data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    data_socket.connect((data_ip, data_port))
+
 def authenticate_user() -> Tuple[bool, str]:
     answers = questionary.form(
         input_username=questionary.text("Input username"),
         input_password=questionary.text("Input password")
     ).ask()
     
-    response_user_command = send_command(Command.USER, answers['input_username'])
-    response_pass_command = send_command(Command.PASS, answers['input_password'])
+    response_user_command_status, _ = send_command(Command.USER, answers['input_username'])
+    response_pass_command_status, _ = send_command(Command.PASS, answers['input_password'])
     
-    if response_user_command[0] != "331" or response_pass_command[0] != "230":
+    if response_user_command_status != "331" or response_pass_command_status != "230":
         print(f"{Fore.RED}User failed to authenticated! Try again!{Fore.RESET}")
-        return False, response_pass_command[0]
+        return False, response_pass_command_status
     else:
-        return True, response_pass_command[0]
+        return True, response_pass_command_status
 
 def print_working_directory() -> None:
     print("Send command to see current working directory")
@@ -159,20 +175,54 @@ def print_working_directory() -> None:
 
 def list_directory() -> None:
     print("Send command to see files and directory in current working directory")
-    response_psv_command = send_command(Command.PASV)
     
-    data_ip, data_port = parse_pasv_response(response_psv_command[1])
-    if not data_ip or not data_port:
-        print(f"{Fore.RED}Failed to parse PASV response.{Fore.RESET}")
+    open_data_connection()
+    
+    if data_socket == None:
+        print(f"{Fore.RED}ERROR: Data connection can not be open{Fore.RESET}")
         return
     
-    data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    data_socket.connect((data_ip, data_port))
+    if data_socket.fileno() == -1:
+        print(f"{Fore.RED}ERROR: Data connection is already closed{Fore.RESET}")
+        return
     
     send_command(Command.LIST)
     
     directory_listing = data_socket.recv(MAX_BUFFER_SIZE_DATA).decode()
     print(directory_listing)
+    
+    data_socket.close()
+    
+    # Final response
+    receive_control_response()
+
+def download_file_from_server() -> None:
+    file_name = questionary.text("Input file name").ask()
+    
+    open_data_connection()
+    
+    if data_socket == None:
+        print(f"{Fore.RED}ERROR: Data connection can not be open{Fore.RESET}")
+        return
+    
+    if data_socket.fileno() == -1:
+        print(f"{Fore.RED}ERROR: Data connection is already closed{Fore.RESET}")
+        return
+    
+    response_retr_command_status, _ = send_command(Command.RETR, file_name)
+    
+    if not response_retr_command_status == "150":
+        client_socket.close()
+        return
+    
+    
+    new_file_name = questionary.text("Choose a new name for the downloaded file.").ask()
+    
+    with open(new_file_name, "wb") as file:
+        while True:
+            data = data_socket.recv(MAX_BUFFER_SIZE_DATA)
+            if not data: break
+            file.write(data)
     
     data_socket.close()
     

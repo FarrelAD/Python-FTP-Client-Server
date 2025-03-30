@@ -1,29 +1,68 @@
 from colorama import Fore
 from command import Command
 import os
+import platform
+import random
 import select
 import socket
+import stat
 import threading
+import time
 from typing import Tuple
 import questionary
 
-import time
+if platform.system() == "Windows":
+    import win32security # type: ignore
+
+    def get_username(full_path: str) -> str:
+        try:
+            sid = win32security.GetFileSecurity(full_path, win32security.OWNER_SECURITY_INFORMATION).GetSecurityDescriptorOwner()
+            return win32security.LookupAccountSid(None, sid)[0].ljust(10)
+        except:
+            return "UNKNOWN   "
+    
+    def get_group_name(full_path: str) -> str:
+        try:
+            sid = win32security.GetFileSecurity(full_path, win32security.GROUP_SECURITY_INFORMATION).GetSecurityDescriptorGroup()
+            return win32security.LookupAccountSid(None, sid)[0].ljust(10)
+        except:
+            return "UNKNOWN   "
+else:
+    import grp
+    import pwd
+    
+    def get_username(uid) -> str:
+        return pwd.getpwuid(uid).pw_name.ljust(10)
+    
+    def get_group_name(gid) -> str:
+        return grp.getgrgid(gid).gr_name.ljust(10)
 
 
-HOST = 'localhost'
+HOST = '0.0.0.0'
 PORT = 21
 
-server_socket = None
-server_running = False
+MAX_BUFFER_SIZE_CONTROL = 1024
+MAX_BUFFER_SIZE_DATA    = 4096
 
 AUTHORIZED_USER = {
     "karl": "karl123",
     "rose": "rose666"
 }
-
 MAX_ATTEMPTS_LOGIN = 3
 
 CURRENT_DIR = os.getcwd()
+
+server_socket = None
+server_running = False
+
+data_conn = None
+
+
+def get_local_ip() -> str:
+    """Returns the local IP address of the server."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
 
 
 def user_input_listener() -> None:
@@ -42,13 +81,12 @@ def menu() -> None:
     answer = questionary.select(
         "Choose menu",
         choices=[
-            "Start FTP server",
-            ".2.",
-            ".3."
+            "1. Start FTP server",
+            "2. Exit"
         ]).ask()
 
     match answer:
-        case 'Start FTP server':
+        case "1. Start FTP server":
             start()
         case _:
             print("You choose unknown menu! Program ended!")
@@ -91,7 +129,7 @@ def handle_client(client_socket: socket.socket) -> None:
             print(f"{Fore.RED}Connection already closed!{Fore.RESET}")
             break
         
-        client_request = client_socket.recv(1024)
+        client_request = client_socket.recv(MAX_BUFFER_SIZE_CONTROL)
         client_command = client_request.decode().strip()
         
         print(f"Received command: {client_command}")
@@ -104,11 +142,11 @@ def handle_client(client_socket: socket.socket) -> None:
             case Command.PASS.name:
                 handle_pass_command(client_socket, username, command_splitted[1])
             case Command.PASV.name:
-                passive_mode()
+                passive_mode(client_socket)
             case Command.PWD.name:
                 print_working_directory(client_socket)
             case Command.LIST.name:
-                listing_directory()
+                list_directory(client_socket)
             case Command.RETR.name:
                 retrieving_file()
             case Command.QUIT.name:
@@ -146,15 +184,63 @@ def handle_pass_command(client_socket: socket.socket, username: str, input_passw
         response = "530 Incorrect password.\r\n"
     client_socket.sendall(response.encode())
 
-def passive_mode() -> None:
-    pass
+def passive_mode(client_socket: socket.socket) -> None:
+    global data_conn
+    
+    DATA_PORT = random.randint(49512, 65535)
+    data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    data_socket.bind((HOST, DATA_PORT))
+    data_socket.listen(1)
+    
+    response = get_pasv_response(get_local_ip(), DATA_PORT)
+    client_socket.sendall(response.encode())
+    
+    data_conn, data_addr = data_socket.accept()
+    print(f"Data connection established with {data_addr}")
+    
+def get_pasv_response(ip: str, port: int) -> str:
+    """Format the PASV response with the IP and port"""
+    p1, p2 = port // 256, port % 256
+    ip_parts = ip.split(".")
+    return f"227 Entering Passive Mode ({','.join(ip_parts)},{p1},{p2})\r\n"
 
 def print_working_directory(client_socket: socket.socket) -> None:
     response = f"257 {CURRENT_DIR} is current directory\r\n"
     client_socket.sendall(response.encode())
 
-def listing_directory() -> None:
-    pass
+def list_directory(client_socket: socket.socket) -> None:
+    print("Client requested directory listing.")
+    
+    items = os.listdir(CURRENT_DIR)
+    result = []
+
+    for item in items:
+        full_path = os.path.join(CURRENT_DIR, item)
+        file_stat = os.stat(full_path)
+
+        permissions = stat.filemode(file_stat.st_mode)
+        num_links = str(file_stat.st_nlink).rjust(3)
+
+        if platform.system() == "Windows":
+            owner = get_username(full_path)
+            group = get_group_name(full_path)
+        else:
+            owner = get_username(file_stat.st_uid)
+            group = get_group_name(file_stat.st_gid)
+
+        file_size = str(file_stat.st_size).rjust(10)
+        last_modified = time.strftime("%b %d %H:%M", time.localtime(file_stat.st_mtime)).rjust(12)
+        filename = item.ljust(20)
+
+        result.append(f"{permissions} {num_links} {owner} {group} {file_size} {last_modified} {filename}")
+    
+    string_result = "\r\n".join(result) + "\r\n"
+    
+    client_socket.sendall(b"150 Opening data connection\r\n")
+    data_conn.sendall(string_result.encode())
+    
+    data_conn.close()
+    client_socket.sendall(b"226 Closing data connection\r\n")
 
 def retrieving_file() -> None:
     pass

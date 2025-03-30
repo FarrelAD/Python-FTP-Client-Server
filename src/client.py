@@ -1,6 +1,7 @@
 from colorama import Fore
 from command import Command
 import os
+import re
 import socket
 from typing import Tuple
 import questionary
@@ -8,6 +9,8 @@ import questionary
 
 HOST = 'localhost'
 PORT = 21
+MAX_BUFFER_SIZE_CONTROL = 1024
+MAX_BUFFER_SIZE_DATA    = 4096
 
 client_socket = None
 is_connection_active = False
@@ -54,8 +57,7 @@ def start() -> None:
         
         is_connection_active = True
         
-        response = client_socket.recv(1024).decode()
-        print(f"{Fore.GREEN}Response: {response}{Fore.RESET}")
+        receive_control_response()
         
         is_authenticated = False
         response_status = "530"
@@ -79,10 +81,10 @@ def send_command(command: Command, arg: str = '') -> Tuple[str, str]:
     full_command = f"{command.name} {arg}"
     client_socket.sendall(full_command.encode() + b'\r\n')
     
-    return receive_response()
+    return receive_control_response()
     
-def receive_response() -> Tuple[str, str]:
-    response_status, response_msg = client_socket.recv(1024).decode().split(" ", 1)
+def receive_control_response() -> Tuple[str, str]:
+    response_status, response_msg = client_socket.recv(MAX_BUFFER_SIZE_CONTROL).decode().split(" ", 1)
     
     match response_status[0]:
         case "1": response_status_type = Fore.CYAN
@@ -90,9 +92,19 @@ def receive_response() -> Tuple[str, str]:
         case "3": response_status_type = Fore.BLUE
         case "4": response_status_type = Fore.YELLOW
         case "5": response_status_type = Fore.RED
+        case _  : response_status_type = Fore.WHITE
     
     print(f"Response:{response_status_type} {response_status} {response_msg}{Fore.RESET}")
     return response_status, response_msg
+
+def parse_pasv_response(response):
+    """Extract IP and port from the PASV response"""
+    match = re.search(r"\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)", response)
+    if match:
+        ip = ".".join(match.groups()[:4])  # Convert (127,0,0,1) -> 127.0.0.1
+        port = int(match.group(5)) * 256 + int(match.group(6))  # Convert (p1, p2) to integer
+        return ip, port
+    return None, None
 
 def run_communication() -> None:
     while True:
@@ -101,25 +113,30 @@ def run_communication() -> None:
         answer = questionary.select(
             "Choose command",
             choices=[
-                "Send file",
-                "Print working directory",
-                "Change working directory",
-                "List files and directories",
-                "Create directory",
-                "Remove directory",
-                "Download file from the server",
-                "Upload file to the server"
-                "Delete file",
-                "Close connection"
+                "1. Print working directory",
+                "2. Change working directory",
+                "3. List files and directories",
+                "4. Create directory",
+                "5. Remove directory",
+                "6. Download file from the server",
+                "7. Upload file to the server"
+                "8. Delete file",
+                "9. Close connection"
             ]
         ).ask()
         
         match answer:
-            case "Print working directory":
+            case "1. Print working directory":
                 print_working_directory()
-            case "Close connection":
+            case "3. List files and directories":
+                list_directory()
+            case "9. Close connection":
                 close_connection()
                 break
+            case _:
+                print(f"{Fore.YELLOW}Sorry, this command has not been implemented yet!{Fore.RESET}")
+                
+        questionary.press_any_key_to_continue("Press any key to Continue >").ask()
 
 def authenticate_user() -> Tuple[bool, str]:
     answers = questionary.form(
@@ -139,7 +156,28 @@ def authenticate_user() -> Tuple[bool, str]:
 def print_working_directory() -> None:
     print("Send command to see current working directory")
     send_command(Command.PWD)
-    questionary.press_any_key_to_continue("Press any key to Continue >").ask()
+
+def list_directory() -> None:
+    print("Send command to see files and directory in current working directory")
+    response_psv_command = send_command(Command.PASV)
+    
+    data_ip, data_port = parse_pasv_response(response_psv_command[1])
+    if not data_ip or not data_port:
+        print(f"{Fore.RED}Failed to parse PASV response.{Fore.RESET}")
+        return
+    
+    data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    data_socket.connect((data_ip, data_port))
+    
+    send_command(Command.LIST)
+    
+    directory_listing = data_socket.recv(MAX_BUFFER_SIZE_DATA).decode()
+    print(directory_listing)
+    
+    data_socket.close()
+    
+    # Final response
+    receive_control_response()
 
 def close_connection() -> None:
     send_command(Command.QUIT)
